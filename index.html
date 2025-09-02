@@ -1,98 +1,99 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Voice Recorder</title>
-<style>
-  :root { --pad: 14px; }
-  body { font-family: system-ui, Arial, sans-serif; margin: var(--pad); }
-  h2 { margin: 0 0 8px; }
-  .row { margin: 10px 0; }
-  button { padding: 10px 14px; border-radius: 12px; border: 1px solid #ccc; cursor: pointer; }
-  #status { font-size: .95rem; color: #333; }
-</style>
-</head>
-<body>
-  <h2>Record your answer</h2>
-  <div class="row">
-    <button id="start">🎙️ Start</button>
-    <button id="stop" disabled>⏹️ Stop</button>
-  </div>
-  <div class="row">
-    <audio id="player" controls></audio>
-  </div>
-  <div class="row">
-    <a id="download" href="#" download="response.webm" style="display:none">
-      ⬇️ Download your recording
-    </a>
-    <button id="redo" style="display:none">↺ Record again</button>
-  </div>
-  <div id="status" class="row">Ready.</div>
+<script>
+  const startBtn = document.getElementById('start');
+  const stopBtn  = document.getElementById('stop');
+  const player   = document.getElementById('player');
+  const download = document.getElementById('download');
+  const redoBtn  = document.getElementById('redo');
+  const statusEl = document.getElementById('status');
 
-  <script>
-    const startBtn = document.getElementById('start');
-    const stopBtn  = document.getElementById('stop');
-    const player   = document.getElementById('player');
-    const download = document.getElementById('download');
-    const redoBtn  = document.getElementById('redo');
-    const statusEl = document.getElementById('status');
+  let mediaRecorder, chunks = [], startT = 0, blob = null, chosenType = '', fileExt = 'webm';
 
-    let mediaRecorder, chunks = [], startT = 0, blob = null;
+  // Prefer formats by platform: iOS → m4a (AAC); others → webm (Opus)
+  const candidates = [
+    { type: 'audio/mp4;codecs=mp4a.40.2', ext: 'm4a' }, // iOS Safari friendly
+    { type: 'audio/mp4',                  ext: 'm4a' },
+    { type: 'audio/webm;codecs=opus',     ext: 'webm' }, // Chrome/Android
+    { type: 'audio/webm',                 ext: 'webm' },
+    { type: '',                           ext: 'webm' }  // let browser pick default
+  ];
 
-    async function getMic() {
-      // HTTPS + user gesture required (works on iOS/Android/desktop)
-      return navigator.mediaDevices.getUserMedia({ audio: true });
-    }
-
-    startBtn.onclick = async () => {
+  function pickMime() {
+    for (const c of candidates) {
       try {
-        const stream = await getMic();
-        chunks = [];
-        const options = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-          ? { mimeType: 'audio/webm;codecs=opus' }
-          : {};
-        mediaRecorder = new MediaRecorder(stream, options);
-        mediaRecorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-        mediaRecorder.onstart = () => {
-          startT = Date.now();
-          statusEl.textContent = 'Recording…';
-          startBtn.disabled = true;
-          stopBtn.disabled = false;
-          download.style.display = 'none';
-          redoBtn.style.display = 'none';
-          player.src = '';
-          blob = null;
-        };
-        mediaRecorder.onstop = () => {
-          const dur = ((Date.now() - startT) / 1000).toFixed(1);
-          blob = new Blob(chunks, { type: 'audio/webm' });
-          player.src = URL.createObjectURL(blob);
-          const fileUrl = URL.createObjectURL(blob);
-          download.href = fileUrl;
-          download.style.display = 'inline-block';
-          redoBtn.style.display = 'inline-block';
-          statusEl.textContent = `Recorded ${dur}s. Tap “Download”, then upload the saved file below.`;
-          stopBtn.disabled = true;
-        };
-        mediaRecorder.start();
-      } catch (err) {
-        console.error(err);
-        statusEl.textContent = 'Microphone access failed. Please allow mic permission.';
-      }
-    };
+        if (!c.type || MediaRecorder.isTypeSupported(c.type)) {
+          chosenType = c.type;
+          fileExt = c.ext;
+          return;
+        }
+      } catch (e) {}
+    }
+  }
+  pickMime();
 
-    stopBtn.onclick = () => {
-      if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
-    };
+  async function getMic() {
+    // Must be HTTPS and triggered by a user gesture
+    return navigator.mediaDevices.getUserMedia({ audio: true });
+  }
 
-    redoBtn.onclick = () => {
-      startBtn.disabled = false;
-      download.style.display = 'none';
-      redoBtn.style.display = 'none';
-      player.src = '';
-      statusEl.textContent = 'Ready.';
-    };
-  </script>
-</body>
-</html>
+  // Hide player until we have audio (prevents “Error” banner)
+  player.style.display = 'none';
+
+  startBtn.onclick = async () => {
+    try {
+      const stream = await getMic();
+      chunks = [];
+      const opts = chosenType ? { mimeType: chosenType } : {};
+      mediaRecorder = new MediaRecorder(stream, opts);
+
+      mediaRecorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+
+      mediaRecorder.onstart = () => {
+        startT = Date.now();
+        statusEl.textContent = 'Recording…';
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        download.style.display = 'none';
+        redoBtn.style.display = 'none';
+        player.src = '';
+        player.style.display = 'none';
+        blob = null;
+      };
+
+      mediaRecorder.onstop = () => {
+        const dur = ((Date.now() - startT) / 1000).toFixed(1);
+        const mime = chosenType || 'audio/mp4';
+        blob = new Blob(chunks, { type: mime });
+        const url = URL.createObjectURL(blob);
+
+        player.src = url;
+        player.style.display = 'block'; // only show now
+        download.href = url;
+        download.download = `response.${fileExt}`;
+        download.style.display = 'inline-block';
+
+        redoBtn.style.display = 'inline-block';
+        statusEl.textContent = `Recorded ${dur}s. Download, then upload in the survey below.`;
+        stopBtn.disabled = true;
+      };
+
+      mediaRecorder.start();
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = 'Microphone access failed. Open in Safari/Chrome and allow mic.';
+    }
+  };
+
+  stopBtn.onclick = () => {
+    if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
+  };
+
+  redoBtn.onclick = () => {
+    startBtn.disabled = false;
+    download.style.display = 'none';
+    redoBtn.style.display = 'none';
+    player.src = '';
+    player.style.display = 'none';
+    statusEl.textContent = 'Ready.';
+  };
+</script>
+
